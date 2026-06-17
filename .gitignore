@@ -1,0 +1,8 @@
+# Ignorar archivos de configuración y credenciales locales
+*.ini
+
+# Ignorar resultados generados por la ejecución del código
+*.json
+
+# Ignorar artefactos de modelo serializados
+models.joblib

@@ -1,0 +1,428 @@
+import glob
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+import hashlib
+import platform
+import sys
+
+try:
+    import joblib
+except ImportError:
+    joblib = None
+
+
+def _generate_model_id() -> str:
+    """Genera un model_id único basado en timestamp y hash."""
+    from datetime import datetime as dt
+    timestamp = dt.now().strftime("%Y%m%d_%H%M%S")
+    hash_val = hashlib.md5(timestamp.encode()).hexdigest()[:8]
+    return f"pca_{timestamp}_{hash_val}"
+
+
+def _parse_time_value(time_str: str) -> int:
+    try:
+        return int(time_str.split(':')[0])
+    except Exception:
+        return 0
+
+
+def _load_daily_profiles(file_path: str):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        records = json.load(f)
+
+    days = {}
+    for record in records:
+        date_key = record.get('date')
+        time_key = record.get('time')
+        value = record.get('consumptionKWh')
+
+        if date_key is None or time_key is None or value is None:
+            continue
+
+        days.setdefault(date_key, []).append((time_key, value))
+
+    daily_profiles = []
+    for date_key, values in sorted(days.items(), key=lambda x: datetime.strptime(x[0], '%Y/%m/%d')):
+        values_sorted = sorted(values, key=lambda item: _parse_time_value(item[0]))
+        profile = [float(v) for _, v in values_sorted]
+        if len(profile) == 24:
+            daily_profiles.append((date_key, profile))
+
+    return daily_profiles
+
+
+def reducir_perfiles_diarios_pca(
+    directorio='responses',
+    output_directory='responses/responses_pca',
+    n_components=7,
+    file_pattern='*.json',
+    models_directory='responses/models'
+):
+    try:
+        from sklearn.decomposition import PCA
+        from sklearn.preprocessing import StandardScaler
+    except ImportError as e:
+        raise ImportError('scikit-learn es requerido para PCA. Instala scikit-learn en requirements.txt.') from e
+
+    if not os.path.isdir(directorio):
+        return {
+            'status': 'error',
+            'message': f'Directorio no encontrado: {directorio}'
+        }
+
+    os.makedirs(output_directory, exist_ok=True)
+    os.makedirs(models_directory, exist_ok=True)
+    
+    file_paths = sorted(glob.glob(os.path.join(directorio, file_pattern)))
+
+    if not file_paths:
+        return {
+            'status': 'error',
+            'message': f'No se encontraron ficheros en {directorio} con patrón {file_pattern}'
+        }
+
+    outputs = []
+    processed = 0
+    model_id = _generate_model_id()
+    all_pca_models = []
+    all_scalers = []
+    file_sources = []
+
+    for file_path in file_paths:
+        daily_profiles = _load_daily_profiles(file_path)
+        if not daily_profiles:
+            continue
+
+        dates = [item[0] for item in daily_profiles]
+        matrix = [item[1] for item in daily_profiles]
+
+        if len(matrix) < 2:
+            continue
+
+        scaler = StandardScaler()
+        scaled = scaler.fit_transform(matrix)
+
+        pca = PCA(n_components=min(n_components, min(len(matrix), len(matrix[0]))))
+        reduced = pca.fit_transform(scaled)
+
+        output_rows = []
+        for date_key, reduced_values in zip(dates, reduced):
+            output_rows.append({
+                'date': date_key,
+                'components': [float(v) for v in reduced_values],
+                'model_id': model_id
+            })
+
+        output_filename = os.path.basename(file_path).replace('.json', f'_pca{pca.n_components_}.json')
+        output_path = os.path.join(output_directory, output_filename)
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'input_file': os.path.basename(file_path),
+                'model_id': model_id,
+                'n_days': len(dates),
+                'n_components': pca.n_components_,
+                'explained_variance_ratio': [float(v) for v in pca.explained_variance_ratio_],
+                'profiles': output_rows
+            }, f, indent=2, ensure_ascii=False)
+
+        outputs.append({
+            'input_file': os.path.basename(file_path),
+            'output_file': output_path,
+            'n_days': len(dates),
+            'n_components': pca.n_components_,
+            'explained_variance_ratio': [float(v) for v in pca.explained_variance_ratio_]
+        })
+        processed += 1
+        all_pca_models.append(pca)
+        all_scalers.append(scaler)
+        file_sources.append(os.path.basename(file_path))
+
+    if processed == 0:
+        return {
+            'status': 'error',
+            'message': 'No se procesaron ficheros válidos. Comprueba que tienen 24 horas por día.'
+        }
+
+    # Serializar y guardar modelos y metadata
+    model_save_result = _save_models_and_metadata(
+        model_id=model_id,
+        pca_models=all_pca_models,
+        scalers=all_scalers,
+        file_sources=file_sources,
+        n_components=n_components,
+        output_explained_variance=outputs[0]['explained_variance_ratio'] if outputs else None,
+        models_directory=models_directory
+    )
+
+    return {
+        'status': 'ok',
+        'model_id': model_id,
+        'processed_files': processed,
+        'outputs': outputs,
+        'output_directory': output_directory,
+        'models_directory': models_directory,
+        'model_save_result': model_save_result
+    }
+
+
+def _save_models_and_metadata(model_id, pca_models, scalers, file_sources, n_components, output_explained_variance, models_directory):
+    """Guarda los modelos PCA y scaler junto con metadata."""
+    from datetime import datetime as dt
+    import pkg_resources
+    
+    try:
+        sklearn_version = pkg_resources.get_distribution("scikit-learn").version
+    except:
+        sklearn_version = "unknown"
+    
+    # Crear directorio específico para el modelo
+    model_dir = os.path.join(models_directory, model_id)
+    os.makedirs(model_dir, exist_ok=True)
+    
+    # Guardar modelos usando joblib si está disponible, si no usar pickle
+    try:
+        if joblib:
+            # Guardar todos los modelos en una estructura común
+            model_data = {
+                'pca_models': pca_models,
+                'scalers': scalers,
+                'n_models': len(pca_models),
+                'model_id': model_id
+            }
+            joblib.dump(model_data, os.path.join(model_dir, 'models.joblib'), compress=3)
+            save_method = 'joblib'
+        else:
+            import pickle
+            model_data = {
+                'pca_models': pca_models,
+                'scalers': scalers,
+                'n_models': len(pca_models),
+                'model_id': model_id
+            }
+            with open(os.path.join(model_dir, 'models.pkl'), 'wb') as f:
+                pickle.dump(model_data, f)
+            save_method = 'pickle'
+    except Exception as e:
+        return {
+            'status': 'error',
+            'detail': f'Error guardando modelos: {str(e)}',
+            'save_method': None
+        }
+    
+    # Crear metadata JSON
+    metadata = {
+        'model_id': model_id,
+        'created_at': dt.now().isoformat(),
+        'created_by': 'pca_reduction_endpoint',
+        'training_data': {
+            'source_files': file_sources,
+            'num_files': len(file_sources)
+        },
+        'pca_config': {
+            'n_components': n_components,
+            'n_models': len(pca_models),
+            'explained_variance_ratio': output_explained_variance if output_explained_variance else []
+        },
+        'sklearn_version': sklearn_version,
+        'python_version': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+        'platform': platform.platform(),
+        'save_method': save_method,
+        'model_files': {
+            'models': 'models.joblib' if joblib else 'models.pkl'
+        },
+        'notes': 'Modelos PCA y StandardScaler usados para reducción 365x24 -> 365x7'
+    }
+    
+    metadata_path = os.path.join(model_dir, 'metadata.json')
+    try:
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return {
+            'status': 'error',
+            'detail': f'Error guardando metadata: {str(e)}'
+        }
+    
+    # Guardar también un índice global de modelos
+    _update_models_index(models_directory, model_id, metadata)
+    
+    return {
+        'status': 'ok',
+        'model_id': model_id,
+        'model_directory': model_dir,
+        'metadata_file': metadata_path,
+        'save_method': save_method
+    }
+
+
+def _load_model_data(model_dir):
+    """Carga los datos serializados de PCA y scalers desde disco."""
+    model_path_joblib = os.path.join(model_dir, 'models.joblib')
+    model_path_pickle = os.path.join(model_dir, 'models.pkl')
+
+    if os.path.exists(model_path_joblib) and joblib:
+        return joblib.load(model_path_joblib)
+    if os.path.exists(model_path_pickle):
+        import pickle
+        with open(model_path_pickle, 'rb') as f:
+            return pickle.load(f)
+
+    raise FileNotFoundError(f"No se encontró ningún archivo de modelo en {model_dir}")
+
+
+def _resolve_output_file_path(output_file_path):
+    """Resuelve el path del fichero PCA de salida a partir de un nombre o ruta."""
+    if os.path.isabs(output_file_path) and os.path.exists(output_file_path):
+        return output_file_path
+
+    normalized = os.path.normpath(output_file_path)
+    if os.path.exists(normalized):
+        return normalized
+
+    default_path = os.path.join('responses', 'responses_pca', os.path.basename(output_file_path))
+    if os.path.exists(default_path):
+        return default_path
+
+    return normalized
+
+
+def reconstruir_perfiles_desde_salida_pca(output_file_path, models_directory='responses/models', rebuilt_directory='responses/rebuilt'):
+    """Reconstruye los perfiles originales de 24h desde un fichero PCA y el modelo guardado.
+    Guarda el resultado reconstruido en `responses/rebuilt/` usando el mismo nombre de fichero de entrada.
+    """
+    output_file_path = _resolve_output_file_path(output_file_path)
+
+    if not os.path.isfile(output_file_path):
+        return {
+            'status': 'error',
+            'message': f'Fichero de salida PCA no encontrado: {output_file_path}'
+        }
+
+    with open(output_file_path, 'r', encoding='utf-8') as f:
+        output_data = json.load(f)
+
+    model_id = output_data.get('model_id')
+    input_file = output_data.get('input_file')
+    profiles = output_data.get('profiles', [])
+    explained_variance_ratio = output_data.get('explained_variance_ratio')
+
+    if not model_id or not input_file or not profiles:
+        return {
+            'status': 'error',
+            'message': 'El fichero de salida PCA no contiene la información necesaria (model_id, input_file o profiles).'
+        }
+
+    model_dir = os.path.join(models_directory, model_id)
+    metadata_path = os.path.join(model_dir, 'metadata.json')
+    if not os.path.isfile(metadata_path):
+        return {
+            'status': 'error',
+            'message': f'Metadata del modelo no encontrada: {metadata_path}'
+        }
+
+    with open(metadata_path, 'r', encoding='utf-8') as f:
+        metadata = json.load(f)
+
+    training_files = metadata.get('training_data', {}).get('source_files', [])
+    if input_file not in training_files:
+        return {
+            'status': 'error',
+            'message': f'El archivo de salida PCA no coincide con ningún fichero fuente registrado en el modelo: {input_file}'
+        }
+
+    index = training_files.index(input_file)
+    model_data = _load_model_data(model_dir)
+    pca_models = model_data.get('pca_models', [])
+    scalers = model_data.get('scalers', [])
+
+    if index >= len(pca_models) or index >= len(scalers):
+        return {
+            'status': 'error',
+            'message': 'No se encontró el modelo PCA o scaler correspondiente para el fichero de salida.'
+        }
+
+    pca = pca_models[index]
+    scaler = scalers[index]
+
+    components = [row.get('components', []) for row in profiles]
+    dates = [row.get('date') for row in profiles]
+
+    if not components or any(len(c) == 0 for c in components):
+        return {
+            'status': 'error',
+            'message': 'No se encontraron componentes válidas en el fichero de salida PCA.'
+        }
+
+    try:
+        reconstructed_scaled = pca.inverse_transform(components)
+        reconstructed = scaler.inverse_transform(reconstructed_scaled)
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Error al reconstruir los datos: {str(e)}'
+        }
+
+    reconstructed_profiles = []
+    for date, values in zip(dates, reconstructed):
+        reconstructed_profiles.append({
+            'date': date,
+            'reconstructed_values': [float(v) for v in values]
+        })
+
+    os.makedirs(rebuilt_directory, exist_ok=True)
+    rebuilt_filename = os.path.basename(output_file_path)
+    rebuilt_path = os.path.join(rebuilt_directory, rebuilt_filename)
+    rebuilt_data = {
+        'model_id': model_id,
+        'input_file': input_file,
+        'source_pca_file': output_file_path,
+        'n_days': len(reconstructed_profiles),
+        'n_components': len(components[0]),
+        'explained_variance_ratio': explained_variance_ratio,
+        'reconstructed_profiles': reconstructed_profiles
+    }
+    with open(rebuilt_path, 'w', encoding='utf-8') as f:
+        json.dump(rebuilt_data, f, indent=2, ensure_ascii=False)
+
+    return {
+        'status': 'ok',
+        'model_id': model_id,
+        'input_file': input_file,
+        'n_days': len(reconstructed_profiles),
+        'n_components': len(components[0]),
+        'explained_variance_ratio': explained_variance_ratio,
+        'rebuilt_file': rebuilt_path
+    }
+
+
+def _update_models_index(models_directory, model_id, metadata):
+    """Actualiza el índice global de modelos disponibles."""
+    index_path = os.path.join(models_directory, 'index.json')
+    
+    if os.path.exists(index_path):
+        try:
+            with open(index_path, 'r', encoding='utf-8') as f:
+                index = json.load(f)
+        except:
+            index = {'models': []}
+    else:
+        index = {'models': []}
+    
+    # Añadir o actualizar entrada del modelo
+    existing = next((m for m in index['models'] if m['model_id'] == model_id), None)
+    if not existing:
+        index['models'].append({
+            'model_id': model_id,
+            'created_at': metadata['created_at'],
+            'path': os.path.join(model_id, 'metadata.json'),
+            'status': 'active'
+        })
+    
+    try:
+        with open(index_path, 'w', encoding='utf-8') as f:
+            json.dump(index, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Advertencia: No se pudo actualizar índice de modelos: {str(e)}")
+
