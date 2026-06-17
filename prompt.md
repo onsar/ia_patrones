@@ -152,6 +152,16 @@ Los registros se guardan en `logs/registros.log` con timestamp e información co
   2. nuevos paquetes en `requirements.txt`
   3. cambios en la forma de arrancar el servidor
 
+## Configuración Git local
+- El repositorio se integra con Git desde VS Code.
+- Configuración global aplicada:
+  - `git config --global user.name "onsar"`
+  - `git config --global user.email "oscar.puyal@gmail.com"`
+- Asegúrate de usar `.gitignore` para no subir archivos temporales, de configuración o resultados de ejecución.
+  1. nuevas rutas y su propósito
+  2. nuevos paquetes en `requirements.txt`
+  3. cambios en la forma de arrancar el servidor
+
 ## Cambio reciente: Serialización y trazabilidad de modelos PCA (June 2026)
 - El endpoint PCA ahora guarda los modelos PCA + StandardScaler en directorio `responses/models/` con estructura:
   - Cada modelo obtiene un `model_id` único generado automáticamente.
