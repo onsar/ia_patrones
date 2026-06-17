@@ -2,7 +2,7 @@
 
 ## Endpoint
 - URL: `POST /api/registro`
-- Host: `http://37.187.27.45:8007`
+- Host: `http://31.187.24.45:8007`
 
 ## Propósito
 Recibe los datos del formulario de registro de consumidor enviado desde el mapa y los guarda en un fichero de log.
