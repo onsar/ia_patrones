@@ -6,3 +6,7 @@
 
 # Ignorar artefactos de modelo serializados
 models.joblib
+
+# Ignorar archivos compilados de Python
+__pycache__/
+*.pyc
