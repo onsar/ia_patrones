@@ -12,10 +12,15 @@ except ImportError:
     generar_y_guardar_reading_register = None
 
 try:
-    from pca_profiles import reducir_perfiles_diarios_pca, reconstruir_perfiles_desde_salida_pca
+    from pca_profiles import (
+        reducir_perfiles_diarios_pca,
+        reconstruir_perfiles_desde_salida_pca,
+        cluster_pca_profiles_kmeans
+    )
 except ImportError:
     reducir_perfiles_diarios_pca = None
     reconstruir_perfiles_desde_salida_pca = None
+    cluster_pca_profiles_kmeans = None
 
 # Configurar logging a fichero
 log_dir = Path("logs")
@@ -124,4 +129,28 @@ def reconstruir_perfiles_pca_service(output_file: str, models_directory: str = "
         return {"status": "error", "detail": str(e)}
     except Exception as e:
         logger.error(f"Error en reconstruir_perfiles_pca_service: {str(e)}")
+        return {"status": "error", "detail": str(e)}
+
+
+def cluster_pca_profiles_kmeans_service(
+    directorio: str = "responses/responses_pca",
+    output_directory: str = None,
+    n_clusters: int = 24,
+    file_pattern: str = "*_pca*.json",
+    random_state: int = 42
+) -> dict:
+    """
+    Servicio para ejecutar k-means sobre matrices PCA reducidas y obtener centroides y asignaciones de días.
+    """
+    try:
+        if cluster_pca_profiles_kmeans is None:
+            return {"status": "error", "detail": "La funcionalidad de clustering PCA no está disponible."}
+
+        resultado = cluster_pca_profiles_kmeans(directorio, output_directory, n_clusters, file_pattern, random_state)
+        return resultado
+
+    except ImportError as e:
+        return {"status": "error", "detail": str(e)}
+    except Exception as e:
+        logger.error(f"Error en cluster_pca_profiles_kmeans_service: {str(e)}")
         return {"status": "error", "detail": str(e)}

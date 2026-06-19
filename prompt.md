@@ -152,6 +152,18 @@ Los registros se guardan en `logs/registros.log` con timestamp e información co
   2. nuevos paquetes en `requirements.txt`
   3. cambios en la forma de arrancar el servidor
 
+## Pruebas con Pytest
+- `pytest` ya está listado en `requirements.txt`.
+- Añadir o actualizar pruebas en `tests/`, por ejemplo `tests/test_services.py` y `tests/test_routes.py`.
+- Para endpoints FastAPI, usar `fastapi.testclient.TestClient` y `monkeypatch` para simular dependencias externas.
+- Ejecutar las pruebas desde el directorio raíz del proyecto con:
+
+```bash
+pytest
+```
+- Los resultados de ejecución se guardan en `logs/pytest.log` y `logs/pytest_results.xml`.
+- Documentar en el informe qué pruebas se añadieron y qué funcionalidades cubren.
+
 ## Configuración Git local
 - El repositorio se integra con Git desde VS Code.
 - Configuración global aplicada:

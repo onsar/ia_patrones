@@ -272,6 +272,156 @@ def _load_model_data(model_dir):
     raise FileNotFoundError(f"No se encontró ningún archivo de modelo en {model_dir}")
 
 
+def _load_pca_reduced_profiles(file_path):
+    """Carga un fichero PCA reducido y devuelve fechas, matriz de componentes y metadatos."""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    profiles = data.get('profiles', [])
+    if not profiles:
+        raise ValueError('El fichero PCA no contiene perfiles válidos.')
+
+    dates = []
+    matrix = []
+    n_components = None
+    for row in profiles:
+        date = row.get('date')
+        components = row.get('components')
+        if date is None or components is None:
+            continue
+        if n_components is None:
+            n_components = len(components)
+        elif len(components) != n_components:
+            raise ValueError('Inconsistencia en el número de componentes del fichero PCA.')
+        dates.append(date)
+        matrix.append([float(v) for v in components])
+
+    if not dates:
+        raise ValueError('No se encontraron fechas válidas en el fichero PCA.')
+
+    return dates, matrix, n_components, data.get('input_file'), data.get('model_id')
+
+
+def cluster_pca_profiles_kmeans(
+    directorio='responses/responses_pca',
+    output_directory=None,
+    n_clusters=24,
+    file_pattern='*_pca*.json',
+    random_state=42
+):
+    try:
+        from sklearn.cluster import KMeans
+    except ImportError as e:
+        raise ImportError('scikit-learn es requerido para k-means. Instala scikit-learn en requirements.txt.') from e
+
+    if output_directory is None:
+        output_directory = os.path.join(directorio, 'kmeans_results')
+
+    if not os.path.isdir(directorio):
+        return {
+            'status': 'error',
+            'message': f'Directorio no encontrado: {directorio}'
+        }
+
+    os.makedirs(output_directory, exist_ok=True)
+    file_paths = sorted(glob.glob(os.path.join(directorio, file_pattern)))
+
+    if not file_paths:
+        return {
+            'status': 'error',
+            'message': f'No se encontraron ficheros en {directorio} con patrón {file_pattern}'
+        }
+
+    outputs = []
+    processed = 0
+
+    for file_path in file_paths:
+        try:
+            dates, matrix, n_components, input_file, model_id = _load_pca_reduced_profiles(file_path)
+        except Exception as e:
+            continue
+
+        if len(matrix) < 2:
+            continue
+
+        if n_clusters <= 0:
+            return {
+                'status': 'error',
+                'message': 'El número de centroides debe ser mayor que 0.'
+            }
+
+        if n_clusters > len(matrix):
+            return {
+                'status': 'error',
+                'message': f'El número de centroides ({n_clusters}) no puede ser mayor que el número de días ({len(matrix)}).'
+            }
+
+        kmeans = KMeans(n_clusters=n_clusters, random_state=random_state, n_init='auto')
+        labels = kmeans.fit_predict(matrix)
+        centroids = kmeans.cluster_centers_.tolist()
+
+        assignments = [
+            {'date': dates[i], 'cluster': int(labels[i]), 'day_index': i}
+            for i in range(len(dates))
+        ]
+
+        clusters = {}
+        for idx, label in enumerate(labels):
+            clusters.setdefault(int(label), []).append(dates[idx])
+
+        clusters_summary = [
+            {
+                'cluster': cluster_id,
+                'count': len(dates_list),
+                'dates': dates_list
+            }
+            for cluster_id, dates_list in sorted(clusters.items())
+        ]
+
+        output_filename = os.path.basename(file_path).replace('.json', f'_kmeans{n_clusters}.json')
+        output_path = os.path.join(output_directory, output_filename)
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump({
+                'input_file': input_file,
+                'source_pca_file': os.path.basename(file_path),
+                'model_id': model_id,
+                'n_days': len(dates),
+                'n_components': n_components,
+                'n_clusters': n_clusters,
+                'cluster_centroids': centroids,
+                'assignments': assignments,
+                'clusters': clusters_summary
+            }, f, indent=2, ensure_ascii=False)
+
+        outputs.append({
+            'input_file': input_file,
+            'source_pca_file': os.path.basename(file_path),
+            'output_file': output_path,
+            'n_days': len(dates),
+            'n_components': n_components,
+            'n_clusters': n_clusters,
+            'model_id': model_id
+        })
+        processed += 1
+
+    if processed == 0:
+        return {
+            'status': 'error',
+            'message': 'No se procesaron ficheros PCA válidos. Comprueba que el directorio contiene matrices reducidas.'
+        }
+
+    return {
+        'status': 'ok',
+        'processed_files': processed,
+        'outputs': outputs,
+        'output_directory': output_directory,
+        'input_directory': directorio,
+        'n_clusters': n_clusters,
+        'random_state': random_state
+    }
+
+
 def _resolve_output_file_path(output_file_path):
     """Resuelve el path del fichero PCA de salida a partir de un nombre o ruta."""
     if os.path.isabs(output_file_path) and os.path.exists(output_file_path):
