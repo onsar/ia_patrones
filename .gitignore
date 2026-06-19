@@ -10,3 +10,8 @@ models.joblib
 # Ignorar archivos compilados de Python
 __pycache__/
 *.pyc
+
+# Ignorar ficheros de logs
+logs/
+*.log
+
