@@ -1,23 +1,23 @@
 # Prompt de estado y ejecución
 
 ## Qué se ha hecho
-- Se creó un endpoint mínimo con FastAPI en `app.py`.
-- El endpoint responde a `GET /` con:
-  - `{'message': '¡uvicorn funciona correctamente!'}
+- Se creó la estructura base con FastAPI en `app.py`.
 - Se añadió `requirements.txt` con las dependencias necesarias:
   - `fastapi`
   - `uvicorn`
   - `scikit-learn`
   - `joblib`
-- **Nuevo endpoint `POST /api/registro`**:
+- **Endpoint `POST /api/registro`**:
   - recibe datos del formulario `FormularioRegistro.jsx`
   - Campos: nombre, email, cups, id_comunidad, aceptar_terminos
   - Guarda en `logs/registros.log` sin validar
-- **Nuevos endpoints DATADIS**:
+- **Endpoints DATADIS**:
   - `GET /reading_register/{linea}` - Configurar la consulta a DATADIS
   - `GET /ejecutar` - Ejecutar `procesar_consumos()` y procesar consumos DATADIS
-- **Nuevo endpoint PCA**:
+- **Endpoints PCA**:
   - `POST /perfiles/pca_365x7` - Reduce los perfiles diarios 24h a un número parametrizable de componentes mediante `StandardScaler` + `PCA`
+  - `POST /perfiles/pca/reconstruir` - Reconstruye perfiles originales desde salida PCA
+  - `POST /perfiles/pca/kmeans` - Clusteriza matrices PCA reducidas usando k-means
   - Lee los ficheros JSON de `responses/`
   - Genera salidas en `responses/responses_pca/`
   - Guarda los objetos PCA y StandardScaler en `responses/models/` con `model_id`
@@ -45,27 +45,26 @@ uvicorn app:app --host 0.0.0.0 --port 8007
 
 > Si quieres desarrollo con recarga automática solo en el servidor de prueba, añade `--reload`, pero en un servidor público no es recomendable.
 
-## Resultado esperado
-Abrir en el navegador o con `curl`:
+## Verificar el servidor
+Una vez iniciado, puedes acceder a la documentación interactiva de Swagger en:
 
-```bash
-curl http://37.187.27.45:8007/
+```
+http://37.187.27.45:8007/docs
 ```
 
-Debe devolver:
+O a ReDoc en:
 
-```json
-{"message":"¡uvicorn funciona correctamente!"}
+```
+http://37.187.27.45:8007/redoc
 ```
 
 ## Endpoints disponibles
-- `GET /` - salud del servidor
 - `POST /api/registro` - guardar registro de formulario
 - `GET /reading_register/{linea}` - generar `reading_register` para DATADIS
 - `GET /ejecutar` - ejecutar la consulta a DATADIS y procesar consumos
 - `POST /perfiles/pca_365x7` - reducir perfiles diarios 24h a un número parametrizable de componentes usando PCA, guardar modelos en `responses/models/` con trazabilidad `model_id`
 - `POST /perfiles/pca/reconstruir` - reconstruir la matriz original 365x24 desde un fichero PCA generado y el modelo existente
-  - alias compatible: `POST /perfiles/pca_365x7/reconstruir`
+- `POST /perfiles/pca/kmeans` - clusterizar matrices PCA reducidas (365×7) usando k-means, generar centroides y asignaciones de días
 
 ## Uso del endpoint PCA
 POST a `http://37.187.27.45:8007/perfiles/pca_365x7` con un body JSON opcional:
@@ -87,6 +86,25 @@ El endpoint:
 - **Nuevo**: Genera un `model_id` único, serializa los objetos PCA y StandardScaler en `responses/models/<model_id>/`, guarda metadata en `responses/models/<model_id>/metadata.json`.
 - Cada perfil reducido incluye el `model_id` en su JSON para trazabilidad y futura reconstrucción.
 - Mantiene un índice global de modelos en `responses/models/index.json` para referencia rápida.
+
+## Uso del endpoint de clustering PCA
+POST a `http://37.187.27.45:8007/perfiles/pca/kmeans` con un body JSON opcional:
+
+```json
+{
+  "directorio": "responses/responses_pca",
+  "output_directory": "responses/responses_pca/kmean1",
+  "n_clusters": 24,
+  "file_pattern": "*_pca*.json",
+  "random_state": 42
+}
+```
+
+El endpoint:
+- Lee las matrices PCA reducidas de `responses/responses_pca/` por defecto.
+- Ejecuta `k-means` sobre cada fichero de perfiles `365×7`.
+- Guarda el resultado en el subdirectorio `responses/responses_pca/kmean1/` por defecto.
+- Devuelve centroides `k×7`, asignaciones de cada día al centroide y los días agrupados por cluster.
 
 ## Uso del endpoint de reconstrucción PCA
 POST a `http://37.187.27.45:8007/perfiles/pca/reconstruir` con un body JSON:
@@ -189,3 +207,12 @@ pytest
 - Se ha añadido funcionalidad PCA para reducción de perfiles diarios.
 - Se ha añadido persistencia y trazabilidad de modelos para garantizar reproducibilidad y reconstrucción posterior.
 - Se recomienda validar que los ficheros `responses/` y `registers/` existen antes de ejecutar en producción.
+
+## Cambios recientes (June 2026)
+- **Endpoint eliminado**: `GET /` (read_root) se removió del servidor.
+- **Directorio por defecto actualizado**: El endpoint `/perfiles/pca/kmeans` ahora usa `responses/responses_pca/kmean1/` como directorio de salida por defecto.
+- **Alias eliminado**: `/perfiles/pca_365x7/reconstruir` fue eliminado; usar solo `/perfiles/pca/reconstruir`.
+- **Pruebas actualizadas**: Se actualizaron los archivos de prueba en `tests/`:
+  - `test_routes.py`: Eliminada la prueba `test_read_root()`, actualizada `test_cluster_pca_profiles_kmeans_route()` con el nuevo directorio por defecto, añadidas pruebas para `test_reducir_perfiles_pca_route()`, `test_reconstruir_perfiles_pca_route()` y `test_ejecutar_script_route()`.
+  - `test_services.py`: Añadidas pruebas para `test_cluster_pca_profiles_kmeans_service_missing()` y `test_cluster_pca_profiles_kmeans_service_default_output_dir()` para verificar que el directorio por defecto es correcto.
+  - `conftest.py`: Sin cambios, la configuración de logging sigue siendo válida.

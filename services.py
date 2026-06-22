@@ -134,7 +134,7 @@ def reconstruir_perfiles_pca_service(output_file: str, models_directory: str = "
 
 def cluster_pca_profiles_kmeans_service(
     directorio: str = "responses/responses_pca",
-    output_directory: str = None,
+    output_directory: str = "responses/responses_pca/kmean1",
     n_clusters: int = 24,
     file_pattern: str = "*_pca*.json",
     random_state: int = 42

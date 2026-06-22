@@ -10,6 +10,7 @@ from services import (
     ejecutar_consulta_datadis_service,
     reducir_perfiles_diarios_pca_service,
     reconstruir_perfiles_pca_service,
+    cluster_pca_profiles_kmeans_service,
 )
 
 
@@ -62,6 +63,29 @@ def test_reconstruir_perfiles_pca_service_missing(monkeypatch):
     monkeypatch.setattr("services.reconstruir_perfiles_desde_salida_pca", None)
     resultado = reconstruir_perfiles_pca_service("responses/sample_pca7.json")
     assert resultado == {"status": "error", "detail": "La funcionalidad de reconstrucción PCA no está disponible."}
+
+
+def test_cluster_pca_profiles_kmeans_service_missing(monkeypatch):
+    monkeypatch.setattr("services.cluster_pca_profiles_kmeans", None)
+    resultado = cluster_pca_profiles_kmeans_service()
+    assert resultado == {"status": "error", "detail": "La funcionalidad de clustering PCA no está disponible."}
+
+
+def test_cluster_pca_profiles_kmeans_service_default_output_dir(monkeypatch):
+    """Verifica que el directorio por defecto es responses/responses_pca/kmean1"""
+    called_args = {}
+    
+    def fake_kmeans(*args, **kwargs):
+        called_args["directorio"] = args[0] if args else None
+        called_args["output_directory"] = args[1] if len(args) > 1 else None
+        return {"status": "ok", "processed_files": 0, "outputs": []}
+    
+    monkeypatch.setattr("services.cluster_pca_profiles_kmeans", fake_kmeans)
+    resultado = cluster_pca_profiles_kmeans_service()
+    
+    assert resultado["status"] == "ok"
+    assert called_args["directorio"] == "responses/responses_pca"
+    assert called_args["output_directory"] == "responses/responses_pca/kmean1"
 
 
 def test_cluster_pca_profiles_kmeans(tmp_path):
