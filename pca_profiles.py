@@ -422,6 +422,120 @@ def cluster_pca_profiles_kmeans(
     }
 
 
+def reconstruir_centroides_desde_kmeans(
+    directorio='responses/responses_pca/kmean1',
+    output_directory=None,
+    file_pattern='*_kmeans*.json',
+    models_directory='responses/models'
+):
+    """Reconstruye consumos horarios (24h) a partir de los centroides de ficheros kmeans.
+
+    Guarda dos ficheros por ejecución en un subdirectorio `centroides1` bajo
+    `output_directory` (por defecto `directorio`):
+      - *_centroides_components.json  (centroides en espacio de componentes)
+      - *_centroides_24h.json        (centroides reconstruidos a 24 valores)
+    """
+    try:
+        import numpy as np
+    except Exception:
+        np = None
+
+    if output_directory is None:
+        output_directory = directorio
+
+    centroides_dir = os.path.join(output_directory, 'centroides1')
+    os.makedirs(centroides_dir, exist_ok=True)
+
+    if not os.path.isdir(directorio):
+        return {'status': 'error', 'message': f'Directorio no encontrado: {directorio}'}
+
+    file_paths = sorted(glob.glob(os.path.join(directorio, file_pattern)))
+    if not file_paths:
+        return {'status': 'error', 'message': f'No se encontraron ficheros en {directorio} con patrón {file_pattern}'}
+
+    outputs = []
+    processed = 0
+
+    for file_path in file_paths:
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            outputs.append({'file': file_path, 'status': 'error', 'detail': str(e)})
+            continue
+
+        source_pca_file = data.get('input_file') or data.get('source_pca_file')
+        model_id = data.get('model_id')
+        centroids = data.get('cluster_centroids') or data.get('cluster_centroids_') or []
+
+        if not centroids:
+            outputs.append({'file': file_path, 'status': 'error', 'detail': 'No se encontraron centroides en el fichero kmeans'})
+            continue
+
+        # Preparar salida de componentes
+        basename = os.path.basename(file_path).replace('.json', '')
+        components_path = os.path.join(centroides_dir, f"{basename}_centroides_components.json")
+        with open(components_path, 'w', encoding='utf-8') as f:
+            json.dump({'source_kmeans_file': os.path.basename(file_path), 'cluster_centroids': centroids}, f, indent=2, ensure_ascii=False)
+
+        # Intentar reconstruir cada centroide a 24h usando el modelo serializado
+        rebuilt_list = []
+        try:
+            model_dir = os.path.join(models_directory, model_id) if model_id else None
+            if not model_dir or not os.path.isdir(model_dir):
+                raise FileNotFoundError(f'Modelo no encontrado: {model_dir}')
+
+            # Cargar metadata para localizar el índice del fichero fuente
+            metadata_path = os.path.join(model_dir, 'metadata.json')
+            if not os.path.isfile(metadata_path):
+                raise FileNotFoundError(f'Metadata no encontrada en {model_dir}')
+
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            training_files = metadata.get('training_data', {}).get('source_files', [])
+            if source_pca_file not in training_files:
+                raise ValueError(f'El fichero fuente {source_pca_file} no está registrado en metadata del modelo')
+
+            index = training_files.index(source_pca_file)
+            model_data = _load_model_data(model_dir)
+            pca_models = model_data.get('pca_models', [])
+            scalers = model_data.get('scalers', [])
+
+            if index >= len(pca_models) or index >= len(scalers):
+                raise IndexError('No se encontró PCA o scaler correspondiente en el modelo para el fichero fuente')
+
+            pca = pca_models[index]
+            scaler = scalers[index]
+
+            for i, centroid in enumerate(centroids):
+                try:
+                    comps = np.array(centroid).reshape(1, -1) if np is not None else None
+                    reconstructed_scaled = pca.inverse_transform(comps)
+                    reconstructed = scaler.inverse_transform(reconstructed_scaled)
+                    reconstructed_values = [float(v) for v in reconstructed.flatten()]
+                    rebuilt_list.append({'cluster': int(i), 'reconstructed_24h': reconstructed_values})
+                except Exception as e:
+                    rebuilt_list.append({'cluster': int(i), 'error': str(e)})
+
+            # Guardar fichero reconstruido
+            recon_path = os.path.join(centroides_dir, f"{basename}_centroides_24h.json")
+            with open(recon_path, 'w', encoding='utf-8') as f:
+                json.dump({'source_kmeans_file': os.path.basename(file_path), 'model_id': model_id, 'reconstructed_centroids': rebuilt_list}, f, indent=2, ensure_ascii=False)
+
+            outputs.append({'file': file_path, 'status': 'ok', 'components_file': components_path, 'reconstructed_file': recon_path})
+            processed += 1
+
+        except Exception as e:
+            outputs.append({'file': file_path, 'status': 'error', 'detail': str(e)})
+            continue
+
+    if processed == 0:
+        return {'status': 'error', 'message': 'No se procesaron ficheros kmeans válidos.', 'outputs': outputs}
+
+    return {'status': 'ok', 'processed_files': processed, 'outputs': outputs, 'output_directory': centroides_dir}
+
+
 def _resolve_output_file_path(output_file_path):
     """Resuelve el path del fichero PCA de salida a partir de un nombre o ruta."""
     if os.path.isabs(output_file_path) and os.path.exists(output_file_path):

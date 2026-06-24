@@ -15,12 +15,14 @@ try:
     from pca_profiles import (
         reducir_perfiles_diarios_pca,
         reconstruir_perfiles_desde_salida_pca,
-        cluster_pca_profiles_kmeans
+        cluster_pca_profiles_kmeans,
+        reconstruir_centroides_desde_kmeans,
     )
 except ImportError:
     reducir_perfiles_diarios_pca = None
     reconstruir_perfiles_desde_salida_pca = None
     cluster_pca_profiles_kmeans = None
+    reconstruir_centroides_desde_kmeans = None
 
 # Configurar logging a fichero
 log_dir = Path("logs")
@@ -153,4 +155,25 @@ def cluster_pca_profiles_kmeans_service(
         return {"status": "error", "detail": str(e)}
     except Exception as e:
         logger.error(f"Error en cluster_pca_profiles_kmeans_service: {str(e)}")
+        return {"status": "error", "detail": str(e)}
+
+
+def reconstruir_centroides_kmeans_service(
+    directorio: str = "responses/responses_pca/kmean1",
+    output_directory: str = None,
+    file_pattern: str = "*_kmeans*.json",
+    models_directory: str = "responses/models"
+) -> dict:
+    """
+    Servicio para reconstruir centroides (24h) a partir de ficheros kmeans.
+    """
+    try:
+        if reconstruir_centroides_desde_kmeans is None:
+            return {"status": "error", "detail": "La funcionalidad de reconstrucción de centroides no está disponible."}
+
+        resultado = reconstruir_centroides_desde_kmeans(directorio, output_directory, file_pattern, models_directory)
+        return resultado
+
+    except Exception as e:
+        logger.error(f"Error en reconstruir_centroides_kmeans_service: {str(e)}")
         return {"status": "error", "detail": str(e)}

@@ -7,6 +7,7 @@ from services import (
     reducir_perfiles_diarios_pca_service,
     reconstruir_perfiles_pca_service,
     cluster_pca_profiles_kmeans_service,
+    reconstruir_centroides_kmeans_service,
 )
 
 router = APIRouter()
@@ -75,6 +76,12 @@ class SolicitudKMeansPCA(BaseModel):
     random_state: int = 42
 
 
+class SolicitudCentroides(BaseModel):
+    directorio: str = "responses/responses_pca/kmean1"
+    output_directory: str = "responses/responses_pca/kmean1"
+    file_pattern: str = "*_kmeans*.json"
+
+
 @router.post("/perfiles/pca_365x7", summary="Reducir perfiles diarios con PCA usando un número parametrizable de componentes")
 def reducir_perfiles_diarios_pca(solicitud: SolicitudPCA):
     """
@@ -122,6 +129,24 @@ def cluster_pca_profiles_kmeans(solicitud: SolicitudKMeansPCA):
             solicitud.n_clusters,
             solicitud.file_pattern,
             solicitud.random_state,
+        )
+        return resultado
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@router.post("/perfiles/pca/centroides", summary="Reconstruir centroides a consumo 24h")
+def reconstruir_centroides_kmeans(solicitud: SolicitudCentroides):
+    """Reconstruye y guarda los consumos horarios (24h) a partir de ficheros kmeans.
+
+    Por defecto busca `_kmeans*.json` en `responses/responses_pca/kmean1` y
+    guarda los resultados en `responses/responses_pca/kmean1/centroides1/`.
+    """
+    try:
+        resultado = reconstruir_centroides_kmeans_service(
+            solicitud.directorio,
+            solicitud.output_directory,
+            solicitud.file_pattern,
         )
         return resultado
     except Exception as e:
