@@ -152,6 +152,25 @@ Body JSON opcional:
 - guarda resultados en `responses/responses_pca/kmean1/`
 - devuelve centroides, asignaciones y clusters
 
+### `POST /perfiles/pca/caracterizacion`
+Caracteriza cada cluster kmeans según la distribución de fechas y tipos de día.
+
+Body JSON opcional:
+
+```json
+{
+  "directorio": "responses/responses_pca/kmean1",
+  "output_directory": "responses/responses_pca/kmean1",
+  "file_pattern": "*_kmeans*.json",
+  "holiday_file": "holidays.json"
+}
+```
+
+- lee ficheros kmeans (`*_kmeans*.json`) en `directorio`.
+- calcula para cada cluster la distribución de meses, estaciones, días laborables y festivos.
+- guarda los resultados en `output_directory` con sufijo `_characterization.json`.
+- devuelve la caracterización por cluster para su uso en asignación probabilística.
+
 ### `POST /perfiles/pca/centroides`
 Reconstruye el consumo horario (24 h) a partir de los centroides ya calculados.
 
@@ -161,12 +180,17 @@ Body JSON opcional:
 {
   "directorio": "responses/responses_pca/kmean1",
   "output_directory": "responses/responses_pca/kmean1",
-  "file_pattern": "*_kmeans*.json"
+  "file_pattern": "*_kmeans*.json",
+  "centroides_subdir": "centroides1"
 }
 ```
 
 - `directorio` por defecto: `responses/responses_pca/kmean1` (donde aparecen las respuestas kmeans).
 - `output_directory` por defecto: `responses/responses_pca/kmean1`.
+
+- `centroides_subdir` por defecto: `centroides1`. Es el nombre del subdirectorio dentro de `output_directory` donde se
+  guardarán los ficheros resultantes de los centroides reconstruidos. Puedes cambiarlo para mantener distintas
+  ejecuciones separadas (p.ej. `centroides_experimentoA`).
 
 Comportamiento:
 - Lee ficheros kmeans (`*_kmeans*.json`) en `directorio`.
@@ -177,6 +201,16 @@ Comportamiento:
 - Guarda dos ficheros por ejecución en `output_directory/centroides1/`:
   1) `*_centroides_components.json` — centroides en espacio de componentes.
   2) `*_centroides_24h.json` — centroides reconstruidos a consumo horario (24 valores por centroide).
+
+Si quieres usar otro nombre de carpeta para los centroides, envía `centroides_subdir` en el body. Por ejemplo:
+
+```bash
+curl -s -X POST http://localhost:8007/perfiles/pca/centroides \
+  -H "Content-Type: application/json" \
+  -d '{"directorio":"responses/responses_pca/kmean1","output_directory":"responses/responses_pca/kmean1","file_pattern":"*_kmeans*.json","centroides_subdir":"centroides_experimentoA"}' | jq
+```
+
+Los ficheros resultantes se guardarán en `responses/responses_pca/kmean1/centroides_experimentoA/`.
 
 Notas:
 - El `model_id` debe existir en `responses/models/` y contener los PCA y scalers serializados.

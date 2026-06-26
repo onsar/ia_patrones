@@ -302,6 +302,207 @@ def _load_pca_reduced_profiles(file_path):
     return dates, matrix, n_components, data.get('input_file'), data.get('model_id')
 
 
+def _parse_date_string(date_str):
+    for fmt in ("%Y/%m/%d", "%Y-%m-%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(date_str, fmt).date()
+        except Exception:
+            continue
+    raise ValueError(f"Fecha inválida: {date_str}")
+
+
+def _season_from_month(month):
+    if month in (12, 1, 2):
+        return 'invierno'
+    if month in (3, 4, 5):
+        return 'primavera'
+    if month in (6, 7, 8):
+        return 'verano'
+    if month in (9, 10, 11):
+        return 'otoño'
+    return 'desconocida'
+
+
+def _load_holiday_dates(holiday_file):
+    dates = set()
+    if not holiday_file:
+        return dates
+
+    holiday_path = holiday_file
+    if not os.path.isabs(holiday_path):
+        holiday_path = os.path.normpath(holiday_path)
+
+    if not os.path.exists(holiday_path):
+        return dates
+
+    try:
+        with open(holiday_path, 'r', encoding='utf-8') as f:
+            if holiday_path.lower().endswith('.json'):
+                data = json.load(f)
+                if isinstance(data, dict):
+                    data = data.get('holidays', data.get('dates', data))
+            else:
+                data = [line.strip() for line in f if line.strip()]
+
+        if isinstance(data, dict):
+            data = list(data.values())
+
+        for item in data:
+            if isinstance(item, str):
+                try:
+                    dates.add(_parse_date_string(item))
+                except Exception:
+                    continue
+            elif isinstance(item, dict) and 'date' in item:
+                try:
+                    dates.add(_parse_date_string(item['date']))
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return dates
+
+
+def caracterizar_clusters_kmeans(
+    directorio='responses/responses_pca/kmean1',
+    output_directory=None,
+    file_pattern='*_kmeans*.json',
+    holiday_file=None
+):
+    if output_directory is None:
+        output_directory = directorio
+
+    if not os.path.isdir(directorio):
+        return {
+            'status': 'error',
+            'message': f'Directorio no encontrado: {directorio}'
+        }
+
+    os.makedirs(output_directory, exist_ok=True)
+    file_paths = sorted(glob.glob(os.path.join(directorio, file_pattern)))
+
+    if not file_paths:
+        return {
+            'status': 'error',
+            'message': f'No se encontraron ficheros en {directorio} con patrón {file_pattern}'
+        }
+
+    holiday_dates = _load_holiday_dates(holiday_file)
+    outputs = []
+
+    for file_path in file_paths:
+        basename = os.path.basename(file_path).replace('.json', '')
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except Exception as e:
+            outputs.append({'file': file_path, 'status': 'error', 'detail': str(e)})
+            continue
+
+        assignments = data.get('assignments', [])
+        if not assignments:
+            outputs.append({'file': file_path, 'status': 'error', 'detail': 'No se encontraron asignaciones en el fichero kmeans'})
+            continue
+
+        cluster_dates = {}
+        for item in assignments:
+            cluster_id = item.get('cluster')
+            date_str = item.get('date')
+            if cluster_id is None or not date_str:
+                continue
+
+            try:
+                date_obj = _parse_date_string(date_str)
+            except Exception:
+                continue
+
+            cluster_dates.setdefault(cluster_id, []).append(date_obj)
+
+        characterization = []
+        for cluster_id, dates in sorted(cluster_dates.items(), key=lambda x: int(x[0]) if isinstance(x[0], str) and x[0].isdigit() else x[0]):
+            n_days = len(dates)
+            month_counts = {}
+            season_counts = {}
+            laborable_count = 0
+            festivo_count = 0
+
+            for date_obj in dates:
+                month_counts[date_obj.month] = month_counts.get(date_obj.month, 0) + 1
+                season = _season_from_month(date_obj.month)
+                season_counts[season] = season_counts.get(season, 0) + 1
+
+                is_weekend = date_obj.weekday() >= 5
+                is_holiday = date_obj in holiday_dates
+                if is_weekend or is_holiday:
+                    festivo_count += 1
+                else:
+                    laborable_count += 1
+
+            month_distribution = {
+                str(month): count for month, count in sorted(month_counts.items())
+            }
+            season_distribution = {
+                season: count for season, count in sorted(season_counts.items())
+            }
+            laborables_pct = round((laborable_count / n_days) * 100, 2) if n_days else 0.0
+            festivos_pct = round((festivo_count / n_days) * 100, 2) if n_days else 0.0
+
+            dominant_month = max(month_counts.items(), key=lambda x: x[1])[0] if month_counts else None
+            dominant_season = max(season_counts.items(), key=lambda x: x[1])[0] if season_counts else None
+
+            characterization.append({
+                'cluster_id': cluster_id,
+                'n_days': n_days,
+                'dominant_month': dominant_month,
+                'dominant_season': dominant_season,
+                'month_distribution': month_distribution,
+                'season_distribution': season_distribution,
+                'laborable_count': laborable_count,
+                'festivo_count': festivo_count,
+                'laborables_pct': laborables_pct,
+                'festivos_pct': festivos_pct,
+                'holiday_file': holiday_file if holiday_file else None
+            })
+
+        output_path = os.path.join(output_directory, f'{basename}_characterization.json')
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'input_file': data.get('input_file'),
+                    'source_kmeans_file': os.path.basename(file_path),
+                    'model_id': data.get('model_id'),
+                    'n_clusters': len(cluster_dates),
+                    'cluster_characterization': characterization
+                }, f, indent=2, ensure_ascii=False)
+
+            outputs.append({
+                'input_file': data.get('input_file'),
+                'source_kmeans_file': os.path.basename(file_path),
+                'output_file': output_path,
+                'n_clusters': len(cluster_dates),
+                'model_id': data.get('model_id'),
+                'status': 'ok'
+            })
+        except Exception as e:
+            outputs.append({'file': file_path, 'status': 'error', 'detail': str(e)})
+
+    if not outputs:
+        return {
+            'status': 'error',
+            'message': 'No se generaron caracterizaciones de cluster válidas.'
+        }
+
+    return {
+        'status': 'ok',
+        'processed_files': len(outputs),
+        'outputs': outputs,
+        'output_directory': output_directory,
+        'input_directory': directorio,
+        'holiday_file': holiday_file
+    }
+
+
 def cluster_pca_profiles_kmeans(
     directorio='responses/responses_pca',
     output_directory=None,
@@ -426,11 +627,12 @@ def reconstruir_centroides_desde_kmeans(
     directorio='responses/responses_pca/kmean1',
     output_directory=None,
     file_pattern='*_kmeans*.json',
-    models_directory='responses/models'
+    models_directory='responses/models',
+    centroides_subdir='centroides1'
 ):
     """Reconstruye consumos horarios (24h) a partir de los centroides de ficheros kmeans.
 
-    Guarda dos ficheros por ejecución en un subdirectorio `centroides1` bajo
+    Guarda dos ficheros por ejecución en un subdirectorio `centroides_subdir` bajo
     `output_directory` (por defecto `directorio`):
       - *_centroides_components.json  (centroides en espacio de componentes)
       - *_centroides_24h.json        (centroides reconstruidos a 24 valores)
@@ -443,7 +645,7 @@ def reconstruir_centroides_desde_kmeans(
     if output_directory is None:
         output_directory = directorio
 
-    centroides_dir = os.path.join(output_directory, 'centroides1')
+    centroides_dir = os.path.join(output_directory, centroides_subdir)
     os.makedirs(centroides_dir, exist_ok=True)
 
     if not os.path.isdir(directorio):

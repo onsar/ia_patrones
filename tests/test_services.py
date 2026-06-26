@@ -11,6 +11,7 @@ from services import (
     reducir_perfiles_diarios_pca_service,
     reconstruir_perfiles_pca_service,
     cluster_pca_profiles_kmeans_service,
+    caracterizar_clusters_kmeans_service,
 )
 
 
@@ -126,3 +127,48 @@ def test_cluster_pca_profiles_kmeans(tmp_path):
     assert len(loaded["cluster_centroids"]) == 2
     assert len(loaded["assignments"]) == 5
     assert all("date" in item and "cluster" in item for item in loaded["assignments"])
+
+
+def test_caracterizar_clusters_kmeans_service_missing(monkeypatch):
+    monkeypatch.setattr("services.caracterizar_clusters_kmeans", None)
+    resultado = caracterizar_clusters_kmeans_service()
+    assert resultado == {"status": "error", "detail": "La funcionalidad de caracterización de clusters no está disponible."}
+
+
+def test_caracterizar_clusters_kmeans_service(tmp_path):
+    kmean_dir = tmp_path / "responses" / "responses_pca" / "kmean1"
+    kmean_dir.mkdir(parents=True)
+
+    sample_data = {
+        "input_file": "source.json",
+        "model_id": "test-model",
+        "assignments": [
+            {"date": "2025/01/01", "cluster": 0},
+            {"date": "2025/01/02", "cluster": 0},
+            {"date": "2025/07/01", "cluster": 1},
+            {"date": "2025/07/05", "cluster": 1}
+        ]
+    }
+
+    sample_file = kmean_dir / "sample_kmeans24.json"
+    sample_file.write_text(json.dumps(sample_data), encoding='utf-8')
+
+    resultado = caracterizar_clusters_kmeans_service(
+        directorio=str(kmean_dir),
+        output_directory=str(kmean_dir),
+        file_pattern="*.json"
+    )
+
+    assert resultado["status"] == "ok"
+    assert len(resultado["outputs"]) == 1
+
+    output_path = resultado["outputs"][0]["output_file"]
+    assert os.path.exists(output_path)
+
+    with open(output_path, 'r', encoding='utf-8') as f:
+        loaded = json.load(f)
+
+    assert loaded["n_clusters"] == 2
+    assert len(loaded["cluster_characterization"]) == 2
+    assert any(cluster["cluster_id"] == 0 for cluster in loaded["cluster_characterization"])
+    assert any(cluster["cluster_id"] == 1 for cluster in loaded["cluster_characterization"])

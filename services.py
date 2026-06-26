@@ -17,12 +17,14 @@ try:
         reconstruir_perfiles_desde_salida_pca,
         cluster_pca_profiles_kmeans,
         reconstruir_centroides_desde_kmeans,
+        caracterizar_clusters_kmeans,
     )
 except ImportError:
     reducir_perfiles_diarios_pca = None
     reconstruir_perfiles_desde_salida_pca = None
     cluster_pca_profiles_kmeans = None
     reconstruir_centroides_desde_kmeans = None
+    caracterizar_clusters_kmeans = None
 
 # Configurar logging a fichero
 log_dir = Path("logs")
@@ -158,11 +160,33 @@ def cluster_pca_profiles_kmeans_service(
         return {"status": "error", "detail": str(e)}
 
 
+def caracterizar_clusters_kmeans_service(
+    directorio: str = "responses/responses_pca/kmean1",
+    output_directory: str = None,
+    file_pattern: str = "*_kmeans*.json",
+    holiday_file: str = None
+) -> dict:
+    """
+    Servicio que calcula la caracterización de cada cluster en función de sus días asignados.
+    """
+    try:
+        if caracterizar_clusters_kmeans is None:
+            return {"status": "error", "detail": "La funcionalidad de caracterización de clusters no está disponible."}
+
+        resultado = caracterizar_clusters_kmeans(directorio, output_directory, file_pattern, holiday_file)
+        return resultado
+
+    except Exception as e:
+        logger.error(f"Error en caracterizar_clusters_kmeans_service: {str(e)}")
+        return {"status": "error", "detail": str(e)}
+
+
 def reconstruir_centroides_kmeans_service(
     directorio: str = "responses/responses_pca/kmean1",
     output_directory: str = None,
     file_pattern: str = "*_kmeans*.json",
-    models_directory: str = "responses/models"
+    models_directory: str = "responses/models",
+    centroides_subdir: str = "centroides1"
 ) -> dict:
     """
     Servicio para reconstruir centroides (24h) a partir de ficheros kmeans.
@@ -171,7 +195,7 @@ def reconstruir_centroides_kmeans_service(
         if reconstruir_centroides_desde_kmeans is None:
             return {"status": "error", "detail": "La funcionalidad de reconstrucción de centroides no está disponible."}
 
-        resultado = reconstruir_centroides_desde_kmeans(directorio, output_directory, file_pattern, models_directory)
+        resultado = reconstruir_centroides_desde_kmeans(directorio, output_directory, file_pattern, models_directory, centroides_subdir)
         return resultado
 
     except Exception as e:

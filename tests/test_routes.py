@@ -141,3 +141,28 @@ def test_reconstruir_perfiles_pca_route(monkeypatch):
     assert response.json()["status"] == "ok"
     assert "model_id" in response.json()
     assert "rebuilt_file" in response.json()
+
+
+def test_caracterizar_clusters_route(monkeypatch):
+    monkeypatch.setattr(
+        "routes.caracterizar_clusters_kmeans_service",
+        lambda directorio, output_directory, file_pattern, holiday_file: {
+            "status": "ok",
+            "processed_files": 1,
+            "output_directory": output_directory,
+            "holiday_file": holiday_file
+        }
+    )
+    client = TestClient(app)
+    payload = {
+        "directorio": "responses/responses_pca/kmean1",
+        "output_directory": "responses/responses_pca/kmean1",
+        "file_pattern": "*_kmeans*.json",
+        "holiday_file": "holidays.json"
+    }
+
+    response = client.post("/perfiles/pca/caracterizacion", json=payload)
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert response.json()["output_directory"] == "responses/responses_pca/kmean1"
+    assert response.json()["holiday_file"] == "holidays.json"

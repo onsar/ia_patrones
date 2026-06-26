@@ -1,5 +1,1 @@
-2026-06-19 12:25:48 [INFO] HTTP Request: GET http://testserver/ "HTTP/1.1 200 OK"
-2026-06-19 12:25:48 [INFO] HTTP Request: POST http://testserver/api/registro "HTTP/1.1 200 OK"
-2026-06-19 12:25:48 [INFO] HTTP Request: GET http://testserver/reading_register/test "HTTP/1.1 200 OK"
-2026-06-19 12:25:48 [INFO] HTTP Request: POST http://testserver/perfiles/pca/kmeans "HTTP/1.1 200 OK"
-2026-06-19 12:25:48 [INFO] Pytest finished: passed=4 failed=0 skipped=0 errors=0 exitstatus=0
+2026-06-24 11:07:40 [INFO] Pytest finished: passed=2 failed=0 skipped=0 errors=0 exitstatus=0

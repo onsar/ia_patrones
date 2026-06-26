@@ -8,6 +8,7 @@ from services import (
     reconstruir_perfiles_pca_service,
     cluster_pca_profiles_kmeans_service,
     reconstruir_centroides_kmeans_service,
+    caracterizar_clusters_kmeans_service,
 )
 
 router = APIRouter()
@@ -80,6 +81,14 @@ class SolicitudCentroides(BaseModel):
     directorio: str = "responses/responses_pca/kmean1"
     output_directory: str = "responses/responses_pca/kmean1"
     file_pattern: str = "*_kmeans*.json"
+    centroides_subdir: str = "centroides1"
+
+
+class SolicitudCaracterizacionClusters(BaseModel):
+    directorio: str = "responses/responses_pca/kmean1"
+    output_directory: str = None
+    file_pattern: str = "*_kmeans*.json"
+    holiday_file: str = None
 
 
 @router.post("/perfiles/pca_365x7", summary="Reducir perfiles diarios con PCA usando un número parametrizable de componentes")
@@ -147,6 +156,22 @@ def reconstruir_centroides_kmeans(solicitud: SolicitudCentroides):
             solicitud.directorio,
             solicitud.output_directory,
             solicitud.file_pattern,
+            centroides_subdir=solicitud.centroides_subdir,
+        )
+        return resultado
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+
+@router.post("/perfiles/pca/caracterizacion", summary="Caracterizar cada cluster kmeans por mes/estación/laborable/festivo")
+def caracterizar_clusters_kmeans(solicitud: SolicitudCaracterizacionClusters):
+    """Genera la caracterización de cada cluster a partir de sus asignaciones de días."""
+    try:
+        resultado = caracterizar_clusters_kmeans_service(
+            solicitud.directorio,
+            solicitud.output_directory,
+            solicitud.file_pattern,
+            solicitud.holiday_file,
         )
         return resultado
     except Exception as e:
